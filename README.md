@@ -53,6 +53,11 @@ Ces commandes servent uniquement à exposer les fichiers statiques pour que les 
   - Générer un jeu de données anonymisé.
   - (Comportement exact dépendant de l'implémentation dans `app.js`.)
 
+Usage recommandé :
+- Cette application est pensée pour être utilisée avant d'envoyer à des LLM (par ex. ChatGPT) des prompts contenant des informations potentiellement sensibles. Son objectif est de protéger la vie privée en anonymisant localement les données (noms, adresses, téléphones, etc.) présentes dans vos prompts.
+- Traitement local : toute l'anonymisation s'effectue côté client dans le navigateur — aucune donnée n'est envoyée sur le réseau par défaut.
+- Démo en ligne : l'application est déployée sur https://prompt-anonymizer.netlify.app/ (capture d'écran fournie dans la revue du projet).
+
 Consulter et modifier `app.js` pour adapter la logique d'anonymisation (par ex. règles de remplacement, format de sortie, taille des jeux de données).
 
 ## Structure des données
