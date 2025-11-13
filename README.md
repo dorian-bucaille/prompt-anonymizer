@@ -1,74 +1,52 @@
-# 💞 Équilibre couple – calculateur
+# 🛡️ Anonymiseur de prompts
 
-Équilibre couple est une application web qui aide deux partenaires à répartir équitablement leurs dépenses communes en tenant compte de leurs salaires nets et des avantages en tickets restaurant. Le calculateur permet d'estimer la contribution mensuelle de chacun, de visualiser le détail des calculs et de partager facilement le résultat avec l'autre personne.
+Cette application React + TypeScript transforme le projet « Équilibre couple » en un anonymiseur de prompts 100 % client-side. Elle détecte des informations personnelles (PII) grâce à des heuristiques locales, propose des remplacements réalistes et vous permet de copier un texte propre prêt pour un LLM en un clic.
 
-## Fonctionnalités principales
+## Fonctionnalités clés
 
-- Paramètres de saisie simples : salaires nets, tickets restaurant et budget commun.
-- Mode avancé pour préciser le pourcentage de tickets réellement dépensés, les dépenses éligibles et ajuster manuellement le prorata.
-- Résumé visuel du montant à déposer par chacun et du cash nécessaire pour équilibrer le budget.
-- Détail complet des calculs et avertissements lorsque les entrées ne sont pas cohérentes.
-- Sauvegarde automatique dans le navigateur et génération de liens partageables.
-- Impression ou export PDF en un clic et bascule clair/sombre.
+- **Détection automatique** des personnes, entreprises, lieux, emails, téléphones et identifiants structurés via regex et listes statiques.
+- **Remplacement cohérent** : une même entité garde la même anonymisation sur tout le texte, quelle que soit la longueur du prompt.
+- **Prévisualisation immédiate** : surlignage des entités détectées, mise à jour du texte anonymisé en temps réel et compteur de caractères.
+- **Édition fine** : changement de type, suppression ou ajout manuel d'entités, génération de nouveaux remplacements, styles variés (prénoms FR, neutres, labels génériques).
+- **Mode debug** pour inspecter la liste des entités, le mapping original → anonymisé et la diff entre les textes.
+- **Respect de la vie privée** : aucune donnée du texte n'est persistée. Seules les préférences (types activés, style, mode debug) sont conservées dans `localStorage`.
 
-## Aperçu rapide
+## Prise en main rapide
 
-L'interface principale se compose d'un formulaire de paramètres, d'un encart de synthèse et d'un bloc de détails :
+1. Collez votre prompt dans la zone « Texte original » : la détection démarre immédiatement.
+2. Vérifiez les entités surlignées et ajustez-les dans le tableau si nécessaire.
+3. Le texte anonymisé se met à jour automatiquement dans le panneau de droite : copiez-le quand vous êtes satisfait.
+4. Utilisez les paramètres pour activer/désactiver des types de PII, choisir un style de remplacement ou régénérer toutes les valeurs.
+5. Activez le mode debug pour investiguer un cas particulier ou comprendre la logique d'anonymisation.
 
-1. Renseignez les salaires nets et, si pertinent, les montants de tickets restaurant.
-2. Activez le *mode avancé* pour saisir les dépenses éligibles supplémentaires ou affiner le prorata via le curseur « Favoriser A/B ».
-3. Consultez les cartes « Synthèse » et « Détails » pour connaître la contribution totale de chacun et la répartition proposée.
-4. Utilisez les boutons situés en haut à droite pour copier un lien partageable, imprimer/exporter en PDF, réinitialiser les paramètres ou activer le thème sombre.
+## Scripts
 
-## Prérequis
+| Commande        | Description                                                |
+|-----------------|------------------------------------------------------------|
+| `npm run dev`   | Lance Vite en mode développement avec rechargement à chaud. |
+| `npm run build` | Produit la version optimisée dans `dist`.                   |
+| `npm test`      | Exécute la suite Vitest (détection, mapping, performances). |
+| `npm run lint`  | Vérifie les règles ESLint/TypeScript du projet.             |
 
-- [Node.js](https://nodejs.org/) 18 ou plus.
-- [npm](https://www.npmjs.com/) (fourni avec Node.js) pour gérer les dépendances.
-
-## Démarrage rapide
+## Développement
 
 ```bash
 npm install
 npm run dev
 ```
 
-Ouvrez ensuite http://localhost:5173 dans votre navigateur pour interagir avec l'application en développement.
-
-### Scripts disponibles
-
-| Commande        | Description                                               |
-|-----------------|-----------------------------------------------------------|
-| `npm run dev`   | Lance le serveur de développement Vite avec rechargement. |
-| `npm run build` | Génère la version de production dans le dossier `dist`.    |
-| `npm test`      | Exécute la suite de tests.                                |
-| `npm run lint`* | (Optionnel) Lance le linter si configuré.                 |
-
-\*La commande `npm run lint` n'est pas fournie par défaut mais peut être ajoutée selon les besoins.
+Rendez-vous ensuite sur http://localhost:5173 pour utiliser l'application. Le code est écrit avec React + TypeScript, Vite, Tailwind CSS et un petit hook de persistance (`usePersistedState`).
 
 ## Déploiement
 
-Le projet est prêt pour un déploiement sur Netlify :
+Le projet est prêt pour Netlify :
 
-1. Connectez le dépôt GitHub à Netlify.
-2. Configurez la commande de build sur `npm run build`.
-3. Définissez le dossier de publication sur `dist`.
+1. Connectez le dépôt GitHub.
+2. Commande de build : `npm run build`.
+3. Dossier de publication : `dist`.
 
-Une fois la build terminée, l'URL Netlify générée peut être partagée directement dans la section « About » du dépôt GitHub.
-
-## Stack technique
-
-- [React](https://reactjs.org/) + [TypeScript](https://www.typescriptlang.org/)
-- [Vite](https://vitejs.dev/) pour le bundling et le serveur de développement.
-- [Tailwind CSS](https://tailwindcss.com/) pour le style et les composants utilitaires.
-
-## Contribution
-
-Les contributions sont bienvenues. Merci de proposer vos améliorations via des issues ou des pull requests. Pensez à lancer les tests avant de soumettre votre PR :
-
-```bash
-npm test
-```
+Netlify se charge du reste et fournit une URL partageable.
 
 ## Licence
 
-Ce projet est publié sous licence [MIT](LICENSE).
+Ce projet est distribué sous licence [MIT](LICENSE).

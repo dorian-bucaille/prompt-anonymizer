@@ -1,644 +1,546 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import type { TFunction } from "i18next";
-import { useTranslation } from "react-i18next";
-import { calculate } from "./lib/calc";
-import type { Inputs, SplitMode } from "./lib/types";
-import { InputField } from "./components/InputField";
-import { SummaryCard } from "./components/SummaryCard";
-import { CalculationInfoCard } from "./components/CalculationInfoCard";
-import { DetailsCard, type DetailsCardHandle } from "./components/DetailsCard";
-import { GlossaryButton } from "./components/GlossaryButton";
-import { InfoIcon } from "./components/InfoIcon";
-import { History, type HistoryHandle } from "./components/History";
-import { loadState, saveState, type HistoryItem } from "./lib/storage";
-import { useCollapse } from "./hooks/useCollapse";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  anonymizeText,
+  assignReplacements,
+  detectPII,
+  generateReplacementValue,
+  normalizeValue,
+  type AnonymizedEntity,
+  type EntityType,
+  type ReplacementStyle,
+} from "./lib/pii";
+import { usePersistedState } from "./hooks/usePersistedState";
+import { CollapsibleSection } from "./components/CollapsibleSection";
 import "./styles.css";
-import { TextField } from "./components/TextField";
 
-const DEFAULTS: Inputs = {
-  partnerAName: "",
-  partnerBName: "",
-  a1: 2000,
-  a2: 175,
-  b2: 0,
-  trPct: 100,
-  b: 2000,
-  m: 1500,
-  advanced: false,
-  E: 600,
-  biasPts: 0,
-  mode: "proportional",
+const TYPE_LABELS: Record<EntityType, string> = {
+  person: "Personne",
+  company: "Entreprise",
+  location: "Lieu",
+  email: "Email",
+  phone: "Téléphone",
+  identifier: "Identifiant",
 };
 
-function parseQuery(defaults: Inputs): Inputs {
-  const u = new URL(window.location.href);
-  const g = (k: keyof Inputs) => u.searchParams.get(String(k));
-  const num = (v: string | null, d: number) => (v ? Number(v) : d);
-  const modeParam = u.searchParams.get("mode");
-  const mode: SplitMode =
-    modeParam === "equal_leftover"
-      ? "equal_leftover"
-      : modeParam === "proportional"
-        ? "proportional"
-        : defaults.mode;
-  return {
-    partnerAName: (u.searchParams.get("nameA") ?? defaults.partnerAName) || "",
-    partnerBName: (u.searchParams.get("nameB") ?? defaults.partnerBName) || "",
-    a1: num(g("a1"), defaults.a1),
-    a2: num(g("a2"), defaults.a2),
-    b2: num(g("b2"), defaults.b2),
-    trPct: num(g("trPct"), defaults.trPct),
-    b: num(g("b"), defaults.b),
-    m: num(g("m"), defaults.m),
-    advanced: g("advanced") ? g("advanced") === "1" : defaults.advanced,
-    E: num(g("E"), defaults.E),
-    biasPts: num(g("biasPts"), defaults.biasPts),
-    mode,
-  };
-}
+const TYPE_COLORS: Record<EntityType, string> = {
+  person: "bg-rose-200/80 text-rose-900 dark:bg-rose-400/30 dark:text-rose-50",
+  company: "bg-sky-200/80 text-sky-900 dark:bg-sky-400/30 dark:text-sky-50",
+  location: "bg-emerald-200/80 text-emerald-900 dark:bg-emerald-400/30 dark:text-emerald-50",
+  email: "bg-amber-200/80 text-amber-900 dark:bg-amber-400/30 dark:text-amber-50",
+  phone: "bg-fuchsia-200/80 text-fuchsia-900 dark:bg-fuchsia-400/30 dark:text-fuchsia-50",
+  identifier: "bg-indigo-200/80 text-indigo-900 dark:bg-indigo-400/30 dark:text-indigo-50",
+};
 
-function toQuery(i: Inputs) {
-  const p = new URLSearchParams();
-  p.set("nameA", i.partnerAName);
-  p.set("nameB", i.partnerBName);
-  p.set("a1", String(i.a1));
-  p.set("a2", String(i.a2));
-  p.set("b2", String(i.b2));
-  p.set("trPct", String(i.trPct));
-  p.set("b", String(i.b));
-  p.set("m", String(i.m));
-  p.set("advanced", i.advanced ? "1" : "0");
-  p.set("E", String(i.E));
-  p.set("biasPts", String(i.biasPts));
-  p.set("mode", i.mode);
-  return `${location.origin}${location.pathname}?${p.toString()}`;
-}
+const PII_OPTIONS: { type: EntityType; description: string }[] = [
+  { type: "person", description: "Prénoms et noms détectés automatiquement" },
+  { type: "company", description: "Organisations, sociétés, institutions" },
+  { type: "location", description: "Villes, rues et lieux sensibles" },
+  { type: "email", description: "Adresses e-mail" },
+  { type: "phone", description: "Numéros de téléphone" },
+  { type: "identifier", description: "Identifiants structurés (IBAN, n° SS, carte)" },
+];
+
+const STYLE_OPTIONS: { value: ReplacementStyle; label: string; description: string }[] = [
+  { value: "french", label: "Prénoms FR", description: "Noms et entreprises réalistes" },
+  { value: "neutral", label: "Neutres", description: "Noms mixtes et sobres" },
+  { value: "labels", label: "Labels génériques", description: "Personne 1, Entreprise 2…" },
+];
+
+const DEFAULT_ENABLED: Record<EntityType, boolean> = {
+  person: true,
+  company: true,
+  location: true,
+  email: true,
+  phone: true,
+  identifier: true,
+};
 
 export default function App() {
-  const { t, i18n } = useTranslation();
-  const locale = i18n.language.startsWith("fr") ? "fr-FR" : "en-GB";
-  const partnerPlaceholderA = t("parameters.partnerPlaceholder", { label: "A" });
-  const partnerPlaceholderB = t("parameters.partnerPlaceholder", { label: "B" });
-  const [inputs, setInputs] = useState<Inputs>(() => {
-    const loaded = loadState(DEFAULTS);
-    const merged = parseQuery(loaded);
-    return merged;
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const toastTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastRegenApplied = useRef(0);
+  const [originalText, setOriginalText] = useState("");
+  const [entities, setEntities] = useState<AnonymizedEntity[]>([]);
+  const [regenSeed, setRegenSeed] = useState(0);
+  const [manualType, setManualType] = useState<EntityType>("person");
+  const [toast, setToast] = useState<string | null>(null);
+  const [enabledTypes, setEnabledTypes] = usePersistedState("pii-types", DEFAULT_ENABLED);
+  const [style, setStyle] = usePersistedState<ReplacementStyle>("pii-style", "french");
+  const [debugMode, setDebugMode] = usePersistedState("pii-debug", false);
+  const [panelState, setPanelState] = usePersistedState("pii-panels", {
+    settings: true,
+    entities: true,
+    education: true,
   });
-  const [lastLoadedInputs, setLastLoadedInputs] = useState<Inputs>(inputs);
-  const [ariaMessage, setAriaMessage] = useState("");
-  const [copyTooltip, setCopyTooltip] = useState<
-    { message: string; tone: "success" | "error" } | null
-  >(null);
-  const copyTooltipTimeout = useRef<ReturnType<typeof setTimeout>>();
-  const historyRef = useRef<HistoryHandle>(null);
-  const titleRef = useRef<HTMLHeadingElement>(null);
-  const detailsRef = useRef<DetailsCardHandle>(null);
-  const biasHighlight = useHighlightOnChange(inputs.biasPts);
-  const advancedRef = useCollapse(inputs.advanced);
-  const isDirty = useMemo(
-    () => !areInputsEqual(inputs, lastLoadedInputs),
-    [inputs, lastLoadedInputs],
-  );
-
-  const partnerAName = inputs.partnerAName.trim() || partnerPlaceholderA;
-  const partnerBName = inputs.partnerBName.trim() || partnerPlaceholderB;
-  const biasDisabled = inputs.mode === "equal_leftover";
-  const advancedCollapsed = !inputs.advanced;
-  const suffixEuroMonth = t("parameters.suffix.euroMonth");
-  const suffixPercent = t("parameters.suffix.percent");
-
-  const labelWithCode = (key: string, code: string, name?: string) => {
-    const base = t(key, name ? { name } : undefined);
-    return inputs.advanced ? `${base}${t("parameters.codeSuffix", { code })}` : base;
-  };
-
-  const salaryLabelA = labelWithCode("parameters.salaryLabel", "a1", partnerAName);
-  const salaryLabelB = labelWithCode("parameters.salaryLabel", "b", partnerBName);
-  const ticketsLabelA = labelWithCode("parameters.ticketsLabel", "a2", partnerAName);
-  const ticketsLabelB = labelWithCode("parameters.ticketsLabel", "b2", partnerBName);
-  const sharedBudgetLabel = labelWithCode("parameters.sharedBudgetLabel", "m");
-  const salaryTooltipA = t("parameters.salaryTooltip", { name: partnerAName });
-  const salaryTooltipB = t("parameters.salaryTooltip", { name: partnerBName });
-  const ticketsTooltipA = t("parameters.ticketsTooltip", { name: partnerAName });
-  const ticketsTooltipB = t("parameters.ticketsTooltip", { name: partnerBName });
-  const sharedBudgetTooltip = t("parameters.sharedBudgetTooltip");
 
   useEffect(() => {
-    saveState(inputs);
-  }, [inputs]);
-
-  const result = useMemo(() => calculate(inputs), [inputs]);
+    const detected = detectPII(originalText, enabledTypes);
+    setEntities((previous) => {
+      const manual = previous.filter((entity) => entity.manual);
+      const shouldReset = lastRegenApplied.current !== regenSeed;
+      if (shouldReset) {
+        lastRegenApplied.current = regenSeed;
+      }
+      const prevAuto = shouldReset ? [] : previous.filter((entity) => !entity.manual);
+      const nextAuto = assignReplacements(detected, { previous: prevAuto, style });
+      return [...nextAuto, ...manual];
+    });
+  }, [originalText, enabledTypes, style, regenSeed]);
 
   useEffect(() => {
     return () => {
-      if (copyTooltipTimeout.current) {
-        clearTimeout(copyTooltipTimeout.current);
+      if (toastTimeout.current) {
+        clearTimeout(toastTimeout.current);
       }
     };
   }, []);
 
-  const copyLink = async () => {
-    const url = toQuery(inputs);
+  const mapping = useMemo(() => {
+    const pairs = new Map<string, string>();
+    entities.forEach((entity) => {
+      const key = normalizeValue(entity.value);
+      if (!pairs.has(key)) {
+        pairs.set(key, entity.replacement);
+      }
+    });
+    return pairs;
+  }, [entities]);
+
+  const anonymizedPreview = useMemo(
+    () => anonymizeText(originalText, entities),
+    [originalText, entities],
+  );
+
+  const charCount = originalText.length;
+  const tooLong = charCount > 5000;
+
+  const highlightContent = useMemo(() => buildHighlightedText(originalText, entities), [
+    originalText,
+    entities,
+  ]);
+
+  const showToast = (message: string) => {
+    setToast(message);
+    if (toastTimeout.current) clearTimeout(toastTimeout.current);
+    toastTimeout.current = setTimeout(() => setToast(null), 2400);
+  };
+
+  const handleCopy = async () => {
+    const textToCopy = anonymizedPreview;
+    if (!textToCopy) {
+      showToast("Rien à copier pour l'instant");
+      return;
+    }
     try {
-      await navigator.clipboard.writeText(url);
-      const message = t("actions.copyLinkSuccess");
-      setAriaMessage(message);
-      setCopyTooltip({ message, tone: "success" });
+      await navigator.clipboard.writeText(textToCopy);
+      showToast("Texte anonymisé copié dans le presse-papiers");
     } catch {
-      const message = "Impossible de copier le lien automatiquement.";
-      setAriaMessage(message);
-      setCopyTooltip({ message, tone: "error" });
+      showToast("Impossible de copier automatiquement");
     }
-
-    if (copyTooltipTimeout.current) {
-      clearTimeout(copyTooltipTimeout.current);
-    }
-
-    copyTooltipTimeout.current = setTimeout(() => {
-      setCopyTooltip(null);
-    }, 2400);
   };
 
-  const reset = () => {
-    const fresh = { ...DEFAULTS };
-    setInputs(fresh);
-    setLastLoadedInputs(fresh);
+  const handleClear = () => {
+    setOriginalText("");
+    setEntities([]);
+    showToast("Champs réinitialisés");
   };
 
-  const printPDF = () => window.print();
+  const handleToggleType = (type: EntityType) => {
+    setEnabledTypes((prev) => ({ ...prev, [type]: !prev[type] }));
+  };
 
-  const handleModeChange = (mode: SplitMode) => {
-    setInputs((prev) => ({ ...prev, mode }));
-    setAriaMessage(
-      mode === "equal_leftover"
-        ? t("accessibility.modeEqualLeftover")
-        : t("accessibility.modeProportional"),
+  const handleReplacementChange = (entity: AnonymizedEntity, nextValue: string) => {
+    const normalized = normalizeValue(entity.value);
+    setEntities((prev) =>
+      prev.map((item) =>
+        normalizeValue(item.value) === normalized
+          ? { ...item, replacement: nextValue }
+          : item,
+      ),
     );
   };
 
-  const handleSummarySave = () => {
-    historyRef.current?.addCurrentState();
+  const handleTypeChange = (entity: AnonymizedEntity, nextType: EntityType) => {
+    const normalized = normalizeValue(entity.value);
+    const nextReplacement = generateReplacementValue({ type: nextType, value: entity.value }, style);
+    setEntities((prev) =>
+      prev.map((item) =>
+        normalizeValue(item.value) === normalized
+          ? { ...item, type: nextType, replacement: nextReplacement }
+          : item,
+      ),
+    );
   };
 
-  const handleSummaryFocusNote = () => {
-    historyRef.current?.focusNote();
+  const handleRemoveEntity = (id: string) => {
+    setEntities((prev) => prev.filter((entity) => entity.id !== id));
   };
 
-  const handleHistoryCleared = () => {
-    setAriaMessage(t("accessibility.historyCleared"));
-  };
-
-  const handleLoadHistory = (item: HistoryItem) => {
-    if (isDirty) {
-      const confirmed = window.confirm(t("actions.confirmLoad"));
-      if (!confirmed) return;
+  const handleAddSelection = () => {
+    const area = textareaRef.current;
+    if (!area) return;
+    const start = area.selectionStart ?? 0;
+    const end = area.selectionEnd ?? start;
+    if (start === end) {
+      showToast("Sélectionnez du texte dans le champ ci-dessus");
+      return;
     }
+    const value = originalText.slice(start, end);
+    if (!value.trim()) {
+      showToast("La sélection est vide");
+      return;
+    }
+    const replacement = generateReplacementValue({ type: manualType, value }, style);
+    const newEntity: AnonymizedEntity = {
+      id: `manual-${Date.now()}`,
+      type: manualType,
+      value,
+      start,
+      end,
+      replacement,
+      manual: true,
+    };
+    setEntities((prev) => [...prev, newEntity]);
+    showToast("Entité ajoutée manuellement");
+  };
 
-    const snapshot = JSON.parse(JSON.stringify(item.inputs)) as Inputs;
-    setInputs(snapshot);
-    setLastLoadedInputs(snapshot);
+  const handleRegenerate = () => {
+    setEntities((prev) => prev.filter((entity) => entity.manual));
+    setRegenSeed((seed) => seed + 1);
+    showToast("Nouvelles valeurs générées");
+  };
 
-    const formattedDate = new Date(item.dateISO).toLocaleDateString(locale);
-    setAriaMessage(t("accessibility.historyLoaded", { date: formattedDate }));
-
-    window.scrollTo({ top: 0, behavior: "smooth" });
-    window.setTimeout(() => {
-      titleRef.current?.focus();
-    }, 300);
+  const togglePanel = (panel: keyof typeof panelState) => {
+    setPanelState((prev) => ({ ...prev, [panel]: !prev[panel] }));
   };
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-slate-100 via-white to-rose-50 transition-colors duration-300 ease-out dark:from-gray-950 dark:via-gray-950 dark:to-slate-900">
-      <div className="pointer-events-none absolute -left-32 top-[-12rem] h-[28rem] w-[28rem] rounded-full bg-rose-300/30 blur-3xl dark:bg-rose-500/20" />
-      <div className="pointer-events-none absolute bottom-[-14rem] right-[-24rem] h-[32rem] w-[32rem] rounded-full bg-sky-300/25 blur-3xl dark:bg-sky-500/20" />
+    <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-8 px-4 py-10 sm:px-6 lg:px-8">
+      <header className="text-center">
+        <h1 className="mt-2 text-4xl font-bold tracking-tight text-gray-900 dark:text-white">
+          Anonymiseur de prompts
+        </h1>
+        <p className="mx-auto mt-4 max-w-3xl text-base text-gray-600 dark:text-gray-300">
+          Collez vos prompts riches en informations personnelles, détectez automatiquement les PII puis
+          remplacez-les par des variantes crédibles avant d'alimenter un modèle de langage. L'anonymisation
+          est réalisée en direct, sans clic supplémentaire.
+        </p>
+      </header>
 
-      <div className="relative z-10 mx-auto w-full max-w-5xl px-4 py-10 sm:px-6 lg:px-8">
-        <header className="rounded-3xl border border-white/70 bg-white/80 px-6 py-6 shadow-xl backdrop-blur-md transition-colors duration-300 ease-out dark:border-white/10 dark:bg-gray-900/60">
-          <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
-            <div className="space-y-2 text-center md:text-left">
-              <h1
-                className="text-3xl font-semibold tracking-tight text-gray-900 dark:text-gray-50"
-                ref={titleRef}
-                tabIndex={-1}
-              >
-                {t("header.title")}
-              </h1>
-              <p className="text-sm text-gray-600 dark:text-gray-300">{t("header.description")}</p>
-            </div>
-            <div className="no-print flex flex-col items-center gap-3 md:items-end">
-              <div className="flex items-center gap-2">
-                <LanguageSwitcher />
-                <ThemeToggle />
-                {inputs.advanced && <GlossaryButton />}
+      <main className="flex flex-col gap-8">
+        <section className="grid gap-6 lg:grid-cols-2">
+          <div className="card flex flex-col gap-4">
+            <div className="flex flex-wrap items-center gap-4">
+              <div>
+                <h2 className="text-2xl font-semibold">Texte original</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Aucun contenu n'est stocké ni envoyé. Tout reste sur votre appareil.
+                </p>
               </div>
-              <div className="flex flex-wrap justify-center gap-2 md:justify-end">
-                <a
-                  href="https://github.com/dorian-bucaille/equilibre-couple"
-                  className="btn btn-ghost"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {t("header.github")}
-                </a>
-                <div className="relative">
-                  <button onClick={copyLink} className="btn btn-ghost">
-                    {t("actions.copyLink")}
-                  </button>
-                  {copyTooltip ? (
-                    <div className="pointer-events-none absolute inset-x-0 top-full mt-2 flex justify-center">
-                      <span
-                        role="status"
-                        className={`whitespace-nowrap rounded-lg px-3 py-2 text-xs font-medium shadow-lg ring-1 ring-black/5 ${copyTooltip.tone === "success" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"}`}
-                      >
-                        {copyTooltip.message}
-                      </span>
-                    </div>
-                  ) : null}
-                </div>
-                <button onClick={printPDF} className="btn btn-ghost">
-                  {t("actions.print")}
-                </button>
-                <button onClick={reset} className="btn btn-danger">
-                  {t("actions.reset")}
-                </button>
+              <button type="button" className="btn-ghost ml-auto" onClick={handleClear}>
+                Effacer tout
+              </button>
+            </div>
+
+            <textarea
+              ref={textareaRef}
+              className="input min-h-[200px] flex-1 text-base"
+              placeholder="Collez ici votre texte à anonymiser"
+              value={originalText}
+              onChange={(event) => setOriginalText(event.target.value)}
+            />
+            <div className="flex items-center justify-between text-sm text-gray-500 dark:text-gray-400">
+              <span>{charCount} caractères</span>
+              {tooLong && <span className="font-semibold text-amber-600">Texte volumineux : l'anonymisation peut être plus lente</span>}
+            </div>
+            <div className="rounded-2xl border border-dashed border-gray-200/80 bg-white/60 p-4 text-sm shadow-inner dark:border-gray-700/70 dark:bg-gray-900/40">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                Prévisualisation des entités détectées
+              </p>
+              <div className="mt-2 whitespace-pre-wrap text-base leading-relaxed text-gray-900 dark:text-gray-100">
+                {highlightContent}
               </div>
             </div>
           </div>
-        </header>
 
-        <div aria-live="polite" className="sr-only">
-          {ariaMessage}
-        </div>
-
-        <div className="mt-10 flex flex-col gap-10">
-          <section className="card space-y-6">
-            <div className="space-y-1">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">{t("parameters.title")}</h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400">{t("parameters.description")}</p>
+          <div className="card flex flex-col gap-4">
+            <div className="flex flex-wrap items-center gap-4">
+              <div>
+                <h2 className="text-2xl font-semibold">Texte anonymisé</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Mise à jour automatique pendant la saisie.
+                </p>
+              </div>
+              <button type="button" className="btn-primary ml-auto" onClick={handleCopy}>
+                Copier
+              </button>
             </div>
+            <textarea
+              className="min-h-[200px] flex-1 rounded-2xl border border-gray-200/80 bg-white/80 px-3 py-2 text-base text-gray-900 shadow-inner dark:border-gray-700/60 dark:bg-gray-900/60 dark:text-gray-100"
+              value={anonymizedPreview}
+              readOnly
+              placeholder="Le texte anonymisé apparaîtra ici automatiquement"
+            />
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Identique à la prévisualisation, prêt à être copié en un clic.
+            </p>
+          </div>
+        </section>
 
-            <div className="grid gap-6 sm:grid-cols-2">
-              <TextField
-                id="partnerAName"
-                label={t("parameters.partnerNameLabel", { label: "A" })}
-                value={inputs.partnerAName}
-                onChange={(value) => setInputs({ ...inputs, partnerAName: value })}
-                placeholder={partnerPlaceholderA}
-                tooltip={t("parameters.partnerTooltip", { label: "A" })}
-              />
-              <TextField
-                id="partnerBName"
-                label={t("parameters.partnerNameLabel", { label: "B" })}
-                value={inputs.partnerBName}
-                onChange={(value) => setInputs({ ...inputs, partnerBName: value })}
-                placeholder={partnerPlaceholderB}
-                tooltip={t("parameters.partnerTooltip", { label: "B" })}
-              />
-              <fieldset className="space-y-3 sm:col-span-2" aria-describedby="mode-tip">
-                <legend className="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-200">
-                  <span>{t("parameters.modeLabel")}</span>
-                  <InfoIcon title={t("parameters.modeTooltip")} tooltipId="mode-tip" />
-                </legend>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="mode-option">
-                    <input
-                      type="radio"
-                      name="mode"
-                      value="proportional"
-                      checked={inputs.mode === "proportional"}
-                      onChange={() => handleModeChange("proportional")}
-                      className="mode-option__input"
-                    />
-                    <div className="mode-option__content">
-                      <span className="mode-option__title">{t("parameters.modes.proportional.title")}</span>
-                      <span className="mode-option__description">
-                        {t("parameters.modes.proportional.description")}
-                      </span>
-                    </div>
-                  </label>
-                  <label className="mode-option">
-                    <input
-                      type="radio"
-                      name="mode"
-                      value="equal_leftover"
-                      checked={inputs.mode === "equal_leftover"}
-                      onChange={() => handleModeChange("equal_leftover")}
-                      className="mode-option__input"
-                    />
-                    <div className="mode-option__content">
-                      <span className="mode-option__title">{t("parameters.modes.equal_leftover.title")}</span>
-                      <span className="mode-option__description">
-                        {t("parameters.modes.equal_leftover.description")}
-                      </span>
-                    </div>
-                  </label>
-                </div>
-              </fieldset>
-              <InputField
-                id="a1"
-                label={salaryLabelA}
-                value={inputs.a1}
-                onChange={(v) => setInputs({ ...inputs, a1: v })}
-                suffix={suffixEuroMonth}
-                tooltip={salaryTooltipA}
-              />
-              <InputField
-                id="b"
-                label={salaryLabelB}
-                value={inputs.b}
-                onChange={(v) => setInputs({ ...inputs, b: v })}
-                suffix={suffixEuroMonth}
-                tooltip={salaryTooltipB}
-              />
-              <InputField
-                id="a2"
-                label={ticketsLabelA}
-                value={inputs.a2}
-                onChange={(v) => setInputs({ ...inputs, a2: v })}
-                suffix={suffixEuroMonth}
-                tooltip={ticketsTooltipA}
-              />
-              <InputField
-                id="b2"
-                label={ticketsLabelB}
-                value={inputs.b2}
-                onChange={(v) => setInputs({ ...inputs, b2: v })}
-                suffix={suffixEuroMonth}
-                tooltip={ticketsTooltipB}
-              />
-              <InputField
-                id="m"
-                label={sharedBudgetLabel}
-                value={inputs.m}
-                onChange={(v) => setInputs({ ...inputs, m: v })}
-                suffix={suffixEuroMonth}
-                tooltip={sharedBudgetTooltip}
-              />
-              <div className="sm:col-span-2">
-                <div className="rounded-3xl border border-dashed border-rose-200/80 bg-white/70 p-4 shadow-sm transition-colors duration-300 ease-out dark:border-rose-500/40 dark:bg-gray-900/40">
-                  <button
-                    type="button"
-                    className={`flex w-full items-center justify-between gap-3 rounded-2xl px-4 py-3 text-left transition-all duration-200 ease-out ${
-                      inputs.advanced
-                        ? "bg-rose-500/10 text-rose-700 dark:text-rose-200"
-                        : "bg-white/60 text-gray-700 hover:bg-white dark:bg-gray-900/40 dark:text-gray-200 dark:hover:bg-gray-900/60"
-                    }`}
-                    onClick={() => setInputs({ ...inputs, advanced: !inputs.advanced })}
-                    aria-expanded={inputs.advanced}
-                    aria-controls="advanced-panel"
+        <CollapsibleSection
+          title="Paramètres de détection & style"
+          subtitle="Activez les types pertinents, changez le style et ajoutez vos propres entités"
+          isOpen={panelState.settings}
+          onToggle={() => togglePanel("settings")}
+        >
+          <div className="grid gap-8 lg:grid-cols-2">
+            <div>
+              <h3 className="text-lg font-semibold">Paramètres de détection</h3>
+              <div className="mt-4 space-y-3">
+                {PII_OPTIONS.map((option) => (
+                  <label
+                    key={option.type}
+                    className="flex items-start gap-3 rounded-2xl border border-gray-200/80 bg-white/60 p-3 text-sm shadow-sm transition hover:border-rose-200 dark:border-gray-700/60 dark:bg-gray-900/40 dark:hover:border-rose-500/40"
                   >
-                    <div className="flex flex-col gap-1 text-left">
-                      <span className="text-sm font-semibold">{t("parameters.advancedToggle.title")}</span>
-                      <span className="text-xs text-gray-500 dark:text-gray-400">
-                        {t("parameters.advancedToggle.description")}
-                      </span>
-                    </div>
-                    <span
-                      className={`text-lg transition-transform duration-300 ease-out ${
-                        inputs.advanced ? "rotate-180" : "rotate-0"
-                      }`}
-                      aria-hidden="true"
-                    >
-                      ▾
+                    <input
+                      type="checkbox"
+                      checked={enabledTypes[option.type]}
+                      onChange={() => handleToggleType(option.type)}
+                      className="mt-1"
+                    />
+                    <span>
+                      <span className="font-semibold text-gray-900 dark:text-gray-100">{TYPE_LABELS[option.type]}</span>
+                      <span className="block text-gray-500 dark:text-gray-400">{option.description}</span>
                     </span>
-                  </button>
-                  <p className="mt-3 text-sm text-gray-600 dark:text-gray-300">{t("parameters.advancedToggle.helper")}</p>
-                  <div
-                    id="advanced-panel"
-                    ref={advancedRef}
-                    className="overflow-hidden transition-[max-height,opacity,transform] duration-300 ease-out"
-                    style={{ maxHeight: "0px", opacity: 0, transform: "translateY(-0.5rem)" }}
-                    aria-hidden={advancedCollapsed}
-                  >
-                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                      <InputField
-                        id="trPct"
-                        label={t("parameters.trPctLabel")}
-                        value={inputs.trPct}
-                        onChange={(v) => setInputs({ ...inputs, trPct: v })}
-                        suffix={suffixPercent}
-                        min={0}
-                        max={100}
-                        step={1}
-                        tooltip={t("parameters.trPctTooltip")}
-                        disabled={advancedCollapsed}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-lg font-semibold">Style des remplacements</h3>
+                <div className="mt-4 grid gap-3">
+                  {STYLE_OPTIONS.map((option) => (
+                    <label key={option.value} className="mode-option">
+                      <input
+                        type="radio"
+                        name="style"
+                        value={option.value}
+                        checked={style === option.value}
+                        onChange={() => setStyle(option.value)}
+                        className="mode-option__input"
                       />
-                      <InputField
-                        id="E"
-                        label={t("parameters.eligibleLabel")}
-                        value={inputs.E}
-                        onChange={(v) => setInputs({ ...inputs, E: v })}
-                        suffix={suffixEuroMonth}
-                        tooltip={t("parameters.eligibleTooltip")}
-                        disabled={advancedCollapsed}
-                      />
-                      <label className="flex flex-col gap-4 rounded-2xl border border-gray-200/80 bg-white/70 p-4 shadow-sm transition-colors duration-300 ease-out dark:border-gray-700/60 dark:bg-gray-900/40 sm:col-span-2">
-                        <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-                          <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">
-                            {t("parameters.bias.label", { partnerA: partnerAName, partnerB: partnerBName })}
-                          </span>
-                          <div className="flex flex-col items-start gap-1 text-xs font-medium text-gray-500 sm:items-end sm:text-right dark:text-gray-400">
-                            <span
-                              className={`transition-all duration-200 ease-out ${
-                                biasHighlight
-                                  ? "-translate-y-0.5 text-rose-600 opacity-100 dark:text-rose-300"
-                                  : "translate-y-0 text-gray-500 opacity-80 dark:text-gray-400"
-                              }`}
-                            >
-                              {formatBiasSummary(inputs.biasPts, partnerAName, partnerBName, t)}
-                            </span>
-                            <span
-                              className={`transition-all duration-200 ease-out ${
-                                biasHighlight
-                                  ? "text-rose-600 opacity-100 dark:text-rose-300"
-                                  : "text-gray-500 opacity-80 dark:text-gray-400"
-                              }`}
-                            >
-                              {formatBiasForPartner(inputs.biasPts, partnerAName, t)}
-                            </span>
-                          </div>
-                        </div>
-                        <input
-                          type="range"
-                          min={-10}
-                          max={10}
-                          step={0.5}
-                          value={inputs.biasPts}
-                          onChange={(e) =>
-                            setInputs({ ...inputs, biasPts: parseFloat(e.target.value) })
-                          }
-                          aria-label={t("parameters.bias.sliderLabel", { partnerA: partnerAName, partnerB: partnerBName })}
-                          className={`w-full accent-rose-500 transition-transform duration-200 ease-out ${
-                            biasHighlight ? "scale-[1.01]" : "scale-100"
-                          }`}
-                          disabled={advancedCollapsed || biasDisabled}
-                        />
-                        <div className="flex justify-between text-[11px] font-medium uppercase tracking-wide text-gray-400">
-                          <span>{t("parameters.bias.favorA", { name: partnerAName })}</span>
-                          <span>{t("parameters.bias.neutral")}</span>
-                          <span>{t("parameters.bias.favorB", { name: partnerBName })}</span>
-                        </div>
-                        <span className="text-xs text-gray-500 dark:text-gray-400">
-                          {t("parameters.bias.helper", { partnerA: partnerAName, partnerB: partnerBName })}
-                        </span>
-                        {biasDisabled && (
-                          <span className="field-help text-amber-600 dark:text-amber-400">
-                            {t("parameters.bias.disabled")}
-                          </span>
-                        )}
-                      </label>
-                    </div>
-                  </div>
+                      <div className="mode-option__content">
+                        <p className="mode-option__title">{option.label}</p>
+                        <p className="mode-option__description">{option.description}</p>
+                      </div>
+                    </label>
+                  ))}
                 </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <button type="button" className="btn-ghost" onClick={handleRegenerate}>
+                  Régénérer tout
+                </button>
+                <label className="inline-flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                  <input type="checkbox" checked={debugMode} onChange={() => setDebugMode((value) => !value)} />
+                  Mode debug
+                </label>
+                <div className="ml-auto flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                  <select
+                    value={manualType}
+                    onChange={(event) => setManualType(event.target.value as EntityType)}
+                    className="rounded-2xl border border-gray-200/80 bg-white/90 px-3 py-2 text-sm dark:border-gray-700/60 dark:bg-gray-900/60"
+                  >
+                    {PII_OPTIONS.map((option) => (
+                      <option key={option.type} value={option.type}>
+                        {TYPE_LABELS[option.type]}
+                      </option>
+                    ))}
+                  </select>
+                  <button type="button" className="btn-primary" onClick={handleAddSelection}>
+                    Ajouter la sélection
+                  </button>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Sélectionnez un mot ou une expression dans le texte original pour la transformer en entité personnalisée.
+              </p>
+            </div>
+          </div>
+        </CollapsibleSection>
+
+        <CollapsibleSection
+          title={`Entités détectées (${entities.length})`}
+          subtitle="Revoyez, corrigez ou supprimez chaque correspondance"
+          isOpen={panelState.entities}
+          onToggle={() => togglePanel("entities")}
+        >
+          {entities.length === 0 ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400">Aucune entité pour le moment.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead>
+                  <tr className="text-gray-500 dark:text-gray-400">
+                    <th className="pb-2 pr-4">Type</th>
+                    <th className="pb-2 pr-4">Original</th>
+                    <th className="pb-2 pr-4">Remplacement</th>
+                    <th className="pb-2 pr-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                  {entities.map((entity) => (
+                    <tr key={entity.id} className="align-top">
+                      <td className="py-3 pr-4">
+                        <select
+                          value={entity.type}
+                          onChange={(event) => handleTypeChange(entity, event.target.value as EntityType)}
+                          className="rounded-2xl border border-gray-200/70 bg-white/90 px-2 py-1 text-xs font-semibold uppercase tracking-wider text-gray-700 dark:border-gray-700/60 dark:bg-gray-900/60 dark:text-gray-200"
+                        >
+                          {PII_OPTIONS.map((option) => (
+                            <option key={option.type} value={option.type}>
+                              {TYPE_LABELS[option.type]}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="py-3 pr-4 text-gray-900 dark:text-gray-100">
+                        <span className="inline-block rounded-full bg-gray-100 px-2 py-1 text-xs font-mono text-gray-700 dark:bg-gray-800 dark:text-gray-300">
+                          {entity.value}
+                        </span>
+                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          {entity.start >= 0 ? `pos. ${entity.start} → ${entity.end}` : "manuelle"}
+                        </p>
+                      </td>
+                      <td className="py-3 pr-4">
+                        <input
+                          value={entity.replacement}
+                          onChange={(event) => handleReplacementChange(entity, event.target.value)}
+                          className="w-full rounded-2xl border border-gray-200/80 bg-white/90 px-3 py-2 text-sm text-gray-900 shadow-inner dark:border-gray-700/60 dark:bg-gray-900/60 dark:text-gray-100"
+                        />
+                      </td>
+                      <td className="py-3 text-right">
+                        <button
+                          type="button"
+                          className="text-sm font-semibold text-red-500 hover:text-red-400"
+                          onClick={() => handleRemoveEntity(entity.id)}
+                        >
+                          Supprimer
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CollapsibleSection>
+
+        {debugMode && (
+          <section className="card space-y-4">
+            <h2 className="text-xl font-semibold text-rose-600 dark:text-rose-300">Mode debug</h2>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div>
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  Entités
+                </h3>
+                <pre className="mt-2 max-h-72 overflow-auto rounded-2xl bg-gray-900/80 p-3 text-xs text-emerald-200">
+                  {JSON.stringify(entities, null, 2)}
+                </pre>
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  Mapping original → anonymisé
+                </h3>
+                <pre className="mt-2 max-h-72 overflow-auto rounded-2xl bg-gray-900/80 p-3 text-xs text-amber-200">
+                  {JSON.stringify(
+                    Array.from(mapping.entries()).map(([original, replacement]) => ({ original, replacement })),
+                    null,
+                    2,
+                  )}
+                </pre>
+              </div>
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                Diff
+              </h3>
+              <div className="mt-2 grid gap-4 lg:grid-cols-2">
+                <pre className="rounded-2xl bg-gray-100/80 p-3 text-xs text-gray-900 dark:bg-gray-900/60 dark:text-gray-100">
+                  {originalText || "(vide)"}
+                </pre>
+                <pre className="rounded-2xl bg-gray-100/80 p-3 text-xs text-gray-900 dark:bg-gray-900/60 dark:text-gray-100">
+                  {anonymizedPreview || "(vide)"}
+                </pre>
               </div>
             </div>
           </section>
+        )}
 
-          <SummaryCard
-            r={result}
-            partnerAName={partnerAName}
-            partnerBName={partnerBName}
-            mode={inputs.mode}
-            onSaveHistory={handleSummarySave}
-            onFocusNote={handleSummaryFocusNote}
-          />
-          <CalculationInfoCard
-            onRequestDetails={() => {
-              detailsRef.current?.openAndFocus();
-            }}
-          />
-          <DetailsCard ref={detailsRef} r={result} />
+        <CollapsibleSection
+          title="Pourquoi anonymiser ?"
+          subtitle="Rappels pratiques pour limiter l'exposition des données"
+          isOpen={panelState.education}
+          onToggle={() => togglePanel("education")}
+        >
+          <div className="space-y-4 text-sm text-gray-600 dark:text-gray-300">
+            <p>
+              Les modèles de langage conservent parfois des traces des données fournies pendant l'entraînement. Même si une
+              plateforme promet de ne pas réutiliser vos prompts, transmettre des informations personnelles reste risqué.
+            </p>
+            <p>
+              Avant de partager un texte : supprimez les identifiants uniques, remplacez les noms et ajoutez un contexte générique.
+              Si une information n'est pas indispensable à la compréhension du modèle, ne l'envoyez pas.
+            </p>
+            <ul className="list-disc space-y-2 pl-5">
+              <li>Scindez les données sensibles et partagez uniquement l'essentiel.</li>
+              <li>Préférez des exemples fictifs mais cohérents pour conserver le sens.</li>
+              <li>Vérifiez manuellement les entités détectées : l'automatisation reste approximative.</li>
+            </ul>
+            <p>
+              Cet anonymiseur fonctionne entièrement en local : aucune API externe, aucun stockage de vos textes. Seules vos
+              préférences (types d'entités, style, mode debug) sont conservées dans votre navigateur pour gagner du temps.
+            </p>
+          </div>
+        </CollapsibleSection>
+      </main>
 
-          {result.warnings.length > 0 && (
-            <div className="rounded-3xl border border-amber-500/30 bg-amber-50/80 p-5 text-sm text-amber-800 shadow-sm dark:border-amber-400/40 dark:bg-amber-900/30 dark:text-amber-200">
-              <ul className="ml-4 list-disc space-y-1">
-                {result.warnings.map((w, i) => (
-                  <li key={i}>{w}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          <History
-            ref={historyRef}
-            inputs={inputs}
-            result={result}
-            onLoad={handleLoadHistory}
-            onRequestClearAll={handleHistoryCleared}
-          />
+      {toast && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-6 flex justify-center">
+          <div className="pointer-events-auto rounded-full bg-gray-900/90 px-4 py-2 text-sm font-medium text-white shadow-2xl">
+            {toast}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
 
-function areInputsEqual(a: Inputs, b: Inputs) {
-  const keys: (keyof Inputs)[] = [
-    "partnerAName",
-    "partnerBName",
-    "a1",
-    "a2",
-    "b2",
-    "trPct",
-    "b",
-    "m",
-    "advanced",
-    "E",
-    "biasPts",
-    "mode",
-  ];
-
-  return keys.every((key) => a[key] === b[key]);
-}
-
-function ThemeToggle() {
-  const { t } = useTranslation();
-  const [dark, setDark] = useState(
-    () => window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches,
-  );
-
-  useEffect(() => {
-    const root = document.documentElement;
-    if (dark) root.classList.add("dark");
-    else root.classList.remove("dark");
-  }, [dark]);
-
-  return (
-    <button
-      className="btn btn-ghost transition-transform duration-300 ease-out hover:scale-105 active:scale-95"
-      onClick={() => setDark((d) => !d)}
-      aria-pressed={dark}
-      aria-label={t("accessibility.toggleDarkMode")}
-    >
-      {dark ? "🌙" : "☀️"}
-    </button>
-  );
-}
-
-function LanguageSwitcher() {
-  const { t, i18n } = useTranslation();
-  const current = i18n.language.startsWith("fr") ? "fr" : "en";
-
-  return (
-    <div className="relative">
-      <label htmlFor="language-select" className="sr-only">
-        {t("accessibility.languageSwitcher")}
-      </label>
-      <select
-        id="language-select"
-        className="input w-28 cursor-pointer appearance-none pr-8 text-sm"
-        value={current}
-        onChange={(event) => {
-          const next = event.target.value;
-          void i18n.changeLanguage(next);
-        }}
-      >
-        <option value="fr">{t("languages.fr")}</option>
-        <option value="en">{t("languages.en")}</option>
-      </select>
-      <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-gray-500">▾</span>
-    </div>
-  );
-}
-
-function useHighlightOnChange(value: number, duration = 250) {
-  const [highlight, setHighlight] = useState(false);
-  const firstRender = useRef(true);
-
-  useEffect(() => {
-    if (firstRender.current) {
-      firstRender.current = false;
-      return;
+function buildHighlightedText(text: string, entities: AnonymizedEntity[]) {
+  if (!text) return <span className="text-gray-500 dark:text-gray-400">Collez un texte pour commencer</span>;
+  const sorted = [...entities]
+    .filter((entity) => entity.start >= 0 && entity.end >= entity.start)
+    .sort((a, b) => a.start - b.start);
+  const fragments: JSX.Element[] = [];
+  let cursor = 0;
+  sorted.forEach((entity, index) => {
+    if (entity.start > cursor) {
+      fragments.push(
+        <span key={`text-${entity.id}-${index}`}>{text.slice(cursor, entity.start)}</span>,
+      );
     }
-
-    setHighlight(true);
-    const timeout = window.setTimeout(() => setHighlight(false), duration);
-    return () => window.clearTimeout(timeout);
-  }, [value, duration]);
-
-  return highlight;
-}
-
-function formatBiasSummary(
-  value: number,
-  partnerAName: string,
-  partnerBName: string,
-  t: TFunction,
-) {
-  const normalized = Math.abs(value) < 1e-6 ? 0 : value;
-  if (normalized === 0) return t("parameters.bias.summaryNeutral");
-  const points = `${normalized > 0 ? "+" : ""}${normalized.toFixed(1)}`;
-  if (normalized > 0) {
-    return t("parameters.bias.summaryFavor", { name: partnerBName, points });
-  }
-  return t("parameters.bias.summaryFavor", { name: partnerAName, points });
-}
-
-function formatBiasForPartner(value: number, partnerName: string, t: TFunction) {
-  const normalized = Math.abs(value) < 1e-6 ? 0 : value;
-  const sign = normalized > 0 ? "+" : normalized < 0 ? "" : "+";
-  return t("parameters.bias.summaryDetail", {
-    name: partnerName,
-    points: `${sign}${normalized.toFixed(1)}`,
+    const color = TYPE_COLORS[entity.type];
+    fragments.push(
+      <mark
+        key={`mark-${entity.id}-${index}`}
+        className={`${color} rounded-md px-1 py-0.5 text-xs font-semibold uppercase tracking-wide`}
+      >
+        {text.slice(entity.start, entity.end)}
+      </mark>,
+    );
+    cursor = entity.end;
   });
+  fragments.push(<span key="tail">{text.slice(cursor)}</span>);
+  return fragments;
 }
