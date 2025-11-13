@@ -10,6 +10,7 @@ import {
   type ReplacementStyle,
 } from "./lib/pii";
 import { usePersistedState } from "./hooks/usePersistedState";
+import { CollapsibleSection } from "./components/CollapsibleSection";
 import "./styles.css";
 
 const TYPE_LABELS: Record<EntityType, string> = {
@@ -66,6 +67,11 @@ export default function App() {
   const [enabledTypes, setEnabledTypes] = usePersistedState("pii-types", DEFAULT_ENABLED);
   const [style, setStyle] = usePersistedState<ReplacementStyle>("pii-style", "french");
   const [debugMode, setDebugMode] = usePersistedState("pii-debug", false);
+  const [panelState, setPanelState] = usePersistedState("pii-panels", {
+    settings: true,
+    entities: true,
+    education: true,
+  });
 
   useEffect(() => {
     const detected = detectPII(originalText, enabledTypes);
@@ -204,6 +210,10 @@ export default function App() {
     showToast("Nouvelles valeurs générées");
   };
 
+  const togglePanel = (panel: keyof typeof panelState) => {
+    setPanelState((prev) => ({ ...prev, [panel]: !prev[panel] }));
+  };
+
   return (
     <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-8 px-4 py-10 sm:px-6 lg:px-8">
       <header className="text-center">
@@ -277,85 +287,99 @@ export default function App() {
           </div>
         </section>
 
-        <section className="card grid gap-8 lg:grid-cols-2">
-          <div>
-            <h2 className="text-xl font-semibold">Paramètres de détection</h2>
-            <div className="mt-4 space-y-3">
-              {PII_OPTIONS.map((option) => (
-                <label key={option.type} className="flex items-start gap-3 rounded-2xl border border-gray-200/80 bg-white/60 p-3 text-sm shadow-sm transition hover:border-rose-200 dark:border-gray-700/60 dark:bg-gray-900/40 dark:hover:border-rose-500/40">
-                  <input
-                    type="checkbox"
-                    checked={enabledTypes[option.type]}
-                    onChange={() => handleToggleType(option.type)}
-                    className="mt-1"
-                  />
-                  <span>
-                    <span className="font-semibold text-gray-900 dark:text-gray-100">{TYPE_LABELS[option.type]}</span>
-                    <span className="block text-gray-500 dark:text-gray-400">{option.description}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
-          </div>
-          <div className="space-y-6">
+        <CollapsibleSection
+          title="Paramètres de détection & style"
+          subtitle="Activez les types pertinents, changez le style et ajoutez vos propres entités"
+          isOpen={panelState.settings}
+          onToggle={() => togglePanel("settings")}
+        >
+          <div className="grid gap-8 lg:grid-cols-2">
             <div>
-              <h3 className="text-lg font-semibold">Style des remplacements</h3>
-              <div className="mt-4 grid gap-3">
-                {STYLE_OPTIONS.map((option) => (
-                  <label key={option.value} className="mode-option">
+              <h3 className="text-lg font-semibold">Paramètres de détection</h3>
+              <div className="mt-4 space-y-3">
+                {PII_OPTIONS.map((option) => (
+                  <label
+                    key={option.type}
+                    className="flex items-start gap-3 rounded-2xl border border-gray-200/80 bg-white/60 p-3 text-sm shadow-sm transition hover:border-rose-200 dark:border-gray-700/60 dark:bg-gray-900/40 dark:hover:border-rose-500/40"
+                  >
                     <input
-                      type="radio"
-                      name="style"
-                      value={option.value}
-                      checked={style === option.value}
-                      onChange={() => setStyle(option.value)}
-                      className="mode-option__input"
+                      type="checkbox"
+                      checked={enabledTypes[option.type]}
+                      onChange={() => handleToggleType(option.type)}
+                      className="mt-1"
                     />
-                    <div className="mode-option__content">
-                      <p className="mode-option__title">{option.label}</p>
-                      <p className="mode-option__description">{option.description}</p>
-                    </div>
+                    <span>
+                      <span className="font-semibold text-gray-900 dark:text-gray-100">{TYPE_LABELS[option.type]}</span>
+                      <span className="block text-gray-500 dark:text-gray-400">{option.description}</span>
+                    </span>
                   </label>
                 ))}
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <button type="button" className="btn-ghost" onClick={handleRegenerate}>
-                Régénérer tout
-              </button>
-              <label className="inline-flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
-                <input type="checkbox" checked={debugMode} onChange={() => setDebugMode((value) => !value)} />
-                Mode debug
-              </label>
-              <div className="ml-auto flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-                <select
-                  value={manualType}
-                  onChange={(event) => setManualType(event.target.value as EntityType)}
-                  className="rounded-2xl border border-gray-200/80 bg-white/90 px-3 py-2 text-sm dark:border-gray-700/60 dark:bg-gray-900/60"
-                >
-                  {PII_OPTIONS.map((option) => (
-                    <option key={option.type} value={option.type}>
-                      {TYPE_LABELS[option.type]}
-                    </option>
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-lg font-semibold">Style des remplacements</h3>
+                <div className="mt-4 grid gap-3">
+                  {STYLE_OPTIONS.map((option) => (
+                    <label key={option.value} className="mode-option">
+                      <input
+                        type="radio"
+                        name="style"
+                        value={option.value}
+                        checked={style === option.value}
+                        onChange={() => setStyle(option.value)}
+                        className="mode-option__input"
+                      />
+                      <div className="mode-option__content">
+                        <p className="mode-option__title">{option.label}</p>
+                        <p className="mode-option__description">{option.description}</p>
+                      </div>
+                    </label>
                   ))}
-                </select>
-                <button type="button" className="btn-primary" onClick={handleAddSelection}>
-                  Ajouter la sélection
-                </button>
+                </div>
               </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <button type="button" className="btn-ghost" onClick={handleRegenerate}>
+                  Régénérer tout
+                </button>
+                <label className="inline-flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                  <input type="checkbox" checked={debugMode} onChange={() => setDebugMode((value) => !value)} />
+                  Mode debug
+                </label>
+                <div className="ml-auto flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                  <select
+                    value={manualType}
+                    onChange={(event) => setManualType(event.target.value as EntityType)}
+                    className="rounded-2xl border border-gray-200/80 bg-white/90 px-3 py-2 text-sm dark:border-gray-700/60 dark:bg-gray-900/60"
+                  >
+                    {PII_OPTIONS.map((option) => (
+                      <option key={option.type} value={option.type}>
+                        {TYPE_LABELS[option.type]}
+                      </option>
+                    ))}
+                  </select>
+                  <button type="button" className="btn-primary" onClick={handleAddSelection}>
+                    Ajouter la sélection
+                  </button>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Sélectionnez un mot ou une expression dans le texte original pour la transformer en entité personnalisée.
+              </p>
             </div>
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              Sélectionnez un mot ou une expression dans le texte original pour la transformer en entité personnalisée.
-            </p>
           </div>
-        </section>
+        </CollapsibleSection>
 
-        <section className="card">
-          <h2 className="text-xl font-semibold">Entités détectées ({entities.length})</h2>
+        <CollapsibleSection
+          title={`Entités détectées (${entities.length})`}
+          subtitle="Revoyez, corrigez ou supprimez chaque correspondance"
+          isOpen={panelState.entities}
+          onToggle={() => togglePanel("entities")}
+        >
           {entities.length === 0 ? (
-            <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">Aucune entité pour le moment.</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Aucune entité pour le moment.</p>
           ) : (
-            <div className="mt-4 overflow-x-auto">
+            <div className="overflow-x-auto">
               <table className="min-w-full text-left text-sm">
                 <thead>
                   <tr className="text-gray-500 dark:text-gray-400">
@@ -411,7 +435,7 @@ export default function App() {
               </table>
             </div>
           )}
-        </section>
+        </CollapsibleSection>
 
         {debugMode && (
           <section className="card space-y-4">
@@ -454,9 +478,13 @@ export default function App() {
           </section>
         )}
 
-        <section className="card">
-          <h2 className="text-xl font-semibold">Pourquoi anonymiser ?</h2>
-          <div className="mt-4 space-y-4 text-sm text-gray-600 dark:text-gray-300">
+        <CollapsibleSection
+          title="Pourquoi anonymiser ?"
+          subtitle="Rappels pratiques pour limiter l'exposition des données"
+          isOpen={panelState.education}
+          onToggle={() => togglePanel("education")}
+        >
+          <div className="space-y-4 text-sm text-gray-600 dark:text-gray-300">
             <p>
               Les modèles de langage conservent parfois des traces des données fournies pendant l'entraînement. Même si une
               plateforme promet de ne pas réutiliser vos prompts, transmettre des informations personnelles reste risqué.
@@ -475,7 +503,7 @@ export default function App() {
               préférences (types d'entités, style, mode debug) sont conservées dans votre navigateur pour gagner du temps.
             </p>
           </div>
-        </section>
+        </CollapsibleSection>
       </main>
 
       {toast && (
