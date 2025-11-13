@@ -60,7 +60,6 @@ export default function App() {
   const lastRegenApplied = useRef(0);
   const [originalText, setOriginalText] = useState("");
   const [entities, setEntities] = useState<AnonymizedEntity[]>([]);
-  const [anonymizedText, setAnonymizedText] = useState("");
   const [regenSeed, setRegenSeed] = useState(0);
   const [manualType, setManualType] = useState<EntityType>("person");
   const [toast, setToast] = useState<string | null>(null);
@@ -81,12 +80,6 @@ export default function App() {
       return [...nextAuto, ...manual];
     });
   }, [originalText, enabledTypes, style, regenSeed]);
-
-  useEffect(() => {
-    if (!originalText) {
-      setAnonymizedText("");
-    }
-  }, [originalText]);
 
   useEffect(() => {
     return () => {
@@ -127,7 +120,7 @@ export default function App() {
   };
 
   const handleCopy = async () => {
-    const textToCopy = anonymizedText || anonymizedPreview;
+    const textToCopy = anonymizedPreview;
     if (!textToCopy) {
       showToast("Rien à copier pour l'instant");
       return;
@@ -140,15 +133,9 @@ export default function App() {
     }
   };
 
-  const handleAnonymize = () => {
-    setAnonymizedText(anonymizedPreview);
-    showToast("Anonymisation effectuée");
-  };
-
   const handleClear = () => {
     setOriginalText("");
     setEntities([]);
-    setAnonymizedText("");
     showToast("Champs réinitialisés");
   };
 
@@ -220,41 +207,34 @@ export default function App() {
   return (
     <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-8 px-4 py-10 sm:px-6 lg:px-8">
       <header className="text-center">
-        <p className="text-sm uppercase tracking-[0.3em] text-gray-500 dark:text-gray-400">
-          Outil expermental
-        </p>
         <h1 className="mt-2 text-4xl font-bold tracking-tight text-gray-900 dark:text-white">
           Anonymiseur de prompts
         </h1>
         <p className="mx-auto mt-4 max-w-3xl text-base text-gray-600 dark:text-gray-300">
           Collez vos prompts riches en informations personnelles, détectez automatiquement les PII puis
-          remplacez-les par des variantes crédibles avant d'alimenter un modèle de langage.
+          remplacez-les par des variantes crédibles avant d'alimenter un modèle de langage. L'anonymisation
+          est réalisée en direct, sans clic supplémentaire.
         </p>
       </header>
 
       <main className="flex flex-col gap-8">
-        <section className="card">
-          <div className="flex flex-wrap items-center gap-4">
-            <div>
-              <h2 className="text-2xl font-semibold">Texte original</h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                Aucun contenu n'est stocké ni envoyé. Tout reste sur votre appareil.
-              </p>
-            </div>
-            <div className="ml-auto flex flex-wrap gap-3">
-              <button type="button" className="btn-ghost" onClick={handleClear}>
+        <section className="grid gap-6 lg:grid-cols-2">
+          <div className="card flex flex-col gap-4">
+            <div className="flex flex-wrap items-center gap-4">
+              <div>
+                <h2 className="text-2xl font-semibold">Texte original</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Aucun contenu n'est stocké ni envoyé. Tout reste sur votre appareil.
+                </p>
+              </div>
+              <button type="button" className="btn-ghost ml-auto" onClick={handleClear}>
                 Effacer tout
               </button>
-              <button type="button" className="btn-primary" onClick={handleAnonymize} disabled={!originalText}>
-                Anonymiser
-              </button>
             </div>
-          </div>
 
-          <div className="mt-4 space-y-4">
             <textarea
               ref={textareaRef}
-              className="input min-h-[200px] text-base"
+              className="input min-h-[200px] flex-1 text-base"
               placeholder="Collez ici votre texte à anonymiser"
               value={originalText}
               onChange={(event) => setOriginalText(event.target.value)}
@@ -271,6 +251,29 @@ export default function App() {
                 {highlightContent}
               </div>
             </div>
+          </div>
+
+          <div className="card flex flex-col gap-4">
+            <div className="flex flex-wrap items-center gap-4">
+              <div>
+                <h2 className="text-2xl font-semibold">Texte anonymisé</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Mise à jour automatique pendant la saisie.
+                </p>
+              </div>
+              <button type="button" className="btn-primary ml-auto" onClick={handleCopy}>
+                Copier
+              </button>
+            </div>
+            <textarea
+              className="min-h-[200px] flex-1 rounded-2xl border border-gray-200/80 bg-white/80 px-3 py-2 text-base text-gray-900 shadow-inner dark:border-gray-700/60 dark:bg-gray-900/60 dark:text-gray-100"
+              value={anonymizedPreview}
+              readOnly
+              placeholder="Le texte anonymisé apparaîtra ici automatiquement"
+            />
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Identique à la prévisualisation, prêt à être copié en un clic.
+            </p>
           </div>
         </section>
 
@@ -408,28 +411,6 @@ export default function App() {
               </table>
             </div>
           )}
-        </section>
-
-        <section className="card">
-          <div className="flex flex-wrap items-center gap-4">
-            <div>
-              <h2 className="text-xl font-semibold">Texte anonymisé</h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                Cette zone reste vide tant que vous n'avez pas lancé l'anonymisation.
-              </p>
-            </div>
-            <div className="ml-auto flex flex-wrap gap-3">
-              <button type="button" className="btn-primary" onClick={handleCopy}>
-                Copier
-              </button>
-            </div>
-          </div>
-          <textarea
-            className="mt-4 min-h-[180px] w-full rounded-2xl border border-gray-200/80 bg-white/80 px-3 py-2 text-base text-gray-900 shadow-inner dark:border-gray-700/60 dark:bg-gray-900/60 dark:text-gray-100"
-            value={anonymizedText}
-            readOnly
-            placeholder="Cliquez sur Anonymiser pour générer ce texte"
-          />
         </section>
 
         {debugMode && (

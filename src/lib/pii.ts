@@ -157,17 +157,15 @@ export function detectPII(
   if (flags.company) {
     const listRegex = makeWordRegex(COMPANY_LIST);
     matchAll(text, listRegex, (value, start) => push("company", value, start, start + value.length));
-    const suffixRegex = new RegExp(
-      `(?:[A-Z][\w'-]+(?:\s+[A-Z][\w'-]+)*)\s+(?:SARL|SAS|SA|Inc|Corp|Université|Association)`,
-      "g",
-    );
+    const suffixRegex = /(?:[A-Z][\w'-]+(?:\s+[A-Z][\w'-]+)*)\s+(?:SARL|SAS|SA|Inc|Corp|Université|Association)/g;
     matchAll(text, suffixRegex, (value, start) => push("company", value, start, start + value.length));
   }
 
   if (flags.location) {
     const cityRegex = makeWordRegex(CITY_NAMES);
     matchAll(text, cityRegex, (value, start) => push("location", value, start, start + value.length));
-    const streetRegex = new RegExp(`(?:${STREET_PREFIXES.join("|")})\s+[A-Z][^,\n]+`, "g");
+    const prefixPattern = STREET_PREFIXES.join("|");
+    const streetRegex = new RegExp(String.raw`(?:${prefixPattern})\s+[A-Z][^,\n]+`, "g");
     matchAll(text, streetRegex, (value, start) => push("location", value, start, start + value.length));
   }
 
