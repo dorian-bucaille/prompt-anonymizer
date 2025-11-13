@@ -1,150 +1,18 @@
 <!doctype html>
-<html lang="fr">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Prompt Anonymizer</title>
-  <meta name="description" content="Anonymisez vos prompts avant de les envoyer à un LLM. 100% local, rapide et léger." />
-  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    mark[data-cat] { padding: 0 .15rem; border-radius: .2rem; }
-    mark[data-cat="email"] { background: #fde68a; }
-    mark[data-cat="tel"] { background: #a7f3d0; }
-    mark[data-cat="iban"] { background: #c7d2fe; }
-    mark[data-cat="cb"] { background: #fecaca; }
-    mark[data-cat="siren"], mark[data-cat="siret"] { background: #fbcfe8; }
-    mark[data-cat="cp"] { background: #ddd6fe; }
-    mark[data-cat="adresse"] { background: #bae6fd; }
-    mark[data-cat="prenom"] { background: #fef08a; }
-    mark[data-cat="ville"] { background: #fde2e2; }
-    pre.wrap { white-space: pre-wrap; word-wrap: break-word; }
-  </style>
-</head>
-<body class="min-h-screen bg-slate-50 text-slate-900">
-  <header class="border-b bg-white">
-    <div class="mx-auto max-w-7xl px-4 py-4 md:px-6 md:py-6">
-      <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div>
-          <h1 class="text-2xl font-semibold tracking-tight">Prompt Anonymizer</h1>
-          <p class="text-sm text-slate-600">Anonymisez localement vos textes avant de les envoyer à un LLM.</p>
-        </div>
-        <div class="flex items-center gap-4">
-          <label class="inline-flex items-center gap-2">
-            <input id="toggle-aggressif" type="checkbox" class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500" />
-            <span class="text-sm">Mode agressif</span>
-          </label>
-          <div class="flex gap-2">
-            <button id="btn-preview" class="inline-flex items-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800">Aperçu</button>
-            <button id="btn-anonymize" class="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500">Anonymiser</button>
-            <button id="btn-copy" class="inline-flex items-center gap-2 rounded-md bg-white px-3 py-2 text-sm font-medium text-slate-900 ring-1 ring-inset ring-slate-300 hover:bg-slate-50">Copier</button>
-            <button id="btn-reset" class="inline-flex items-center gap-2 rounded-md bg-white px-3 py-2 text-sm font-medium text-slate-900 ring-1 ring-inset ring-slate-300 hover:bg-slate-50">Réinitialiser</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 md:grid-cols-5 lg:grid-cols-10">
-        <label class="flex items-center justify-between gap-2 rounded-md bg-slate-100 px-2 py-1 text-xs">
-          <span class="flex items-center gap-2">
-            <input id="toggle-email" type="checkbox" checked class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500" />
-            Emails
-          </span>
-          <span id="count-email" class="rounded bg-white px-1.5 py-0.5 text-[11px] font-medium text-slate-700">0</span>
-        </label>
-        <label class="flex items-center justify-between gap-2 rounded-md bg-slate-100 px-2 py-1 text-xs">
-          <span class="flex items-center gap-2">
-            <input id="toggle-tel" type="checkbox" checked class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500" />
-            Téléphones
-          </span>
-          <span id="count-tel" class="rounded bg-white px-1.5 py-0.5 text-[11px] font-medium text-slate-700">0</span>
-        </label>
-        <label class="flex items-center justify-between gap-2 rounded-md bg-slate-100 px-2 py-1 text-xs">
-          <span class="flex items-center gap-2">
-            <input id="toggle-adresse" type="checkbox" checked class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500" />
-            Adresses
-          </span>
-          <span id="count-adresse" class="rounded bg-white px-1.5 py-0.5 text-[11px] font-medium text-slate-700">0</span>
-        </label>
-        <label class="flex items-center justify-between gap-2 rounded-md bg-slate-100 px-2 py-1 text-xs">
-          <span class="flex items-center gap-2">
-            <input id="toggle-cp" type="checkbox" checked class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500" />
-            Codes postaux
-          </span>
-          <span id="count-cp" class="rounded bg-white px-1.5 py-0.5 text-[11px] font-medium text-slate-700">0</span>
-        </label>
-        <label class="flex items-center justify-between gap-2 rounded-md bg-slate-100 px-2 py-1 text-xs">
-          <span class="flex items-center gap-2">
-            <input id="toggle-prenom" type="checkbox" checked class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500" />
-            Prénoms
-          </span>
-          <span id="count-prenom" class="rounded bg-white px-1.5 py-0.5 text-[11px] font-medium text-slate-700">0</span>
-        </label>
-        <label class="flex items-center justify-between gap-2 rounded-md bg-slate-100 px-2 py-1 text-xs">
-          <span class="flex items-center gap-2">
-            <input id="toggle-ville" type="checkbox" class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500" />
-            Villes
-          </span>
-          <span id="count-ville" class="rounded bg-white px-1.5 py-0.5 text-[11px] font-medium text-slate-700">0</span>
-        </label>
-        <label class="flex items-center justify-between gap-2 rounded-md bg-slate-100 px-2 py-1 text-xs">
-          <span class="flex items-center gap-2">
-            <input id="toggle-iban" type="checkbox" checked class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500" />
-            IBAN
-          </span>
-          <span id="count-iban" class="rounded bg-white px-1.5 py-0.5 text-[11px] font-medium text-slate-700">0</span>
-        </label>
-        <label class="flex items-center justify-between gap-2 rounded-md bg-slate-100 px-2 py-1 text-xs">
-          <span class="flex items-center gap-2">
-            <input id="toggle-cb" type="checkbox" checked class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500" />
-            Cartes banc.
-          </span>
-          <span id="count-cb" class="rounded bg-white px-1.5 py-0.5 text-[11px] font-medium text-slate-700">0</span>
-        </label>
-        <label class="flex items-center justify-between gap-2 rounded-md bg-slate-100 px-2 py-1 text-xs">
-          <span class="flex items-center gap-2">
-            <input id="toggle-siren" type="checkbox" checked class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500" />
-            SIREN
-          </span>
-          <span id="count-siren" class="rounded bg-white px-1.5 py-0.5 text-[11px] font-medium text-slate-700">0</span>
-        </label>
-        <label class="flex items-center justify-between gap-2 rounded-md bg-slate-100 px-2 py-1 text-xs">
-          <span class="flex items-center gap-2">
-            <input id="toggle-siret" type="checkbox" checked class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500" />
-            SIRET
-          </span>
-          <span id="count-siret" class="rounded bg-white px-1.5 py-0.5 text-[11px] font-medium text-slate-700">0</span>
-        </label>
-      </div>
-    </div>
-  </header>
-
-  <main class="mx-auto max-w-7xl px-4 py-6 md:px-6 md:py-8">
-    <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
-      <section>
-        <label for="input" class="mb-2 block text-sm font-medium text-slate-700">Entrée</label>
-        <textarea id="input" rows="14" placeholder='Collez votre texte ici. Exemple:
-"Ma sœur Daniel m’a envoyé ce message : Coucou, est-ce que t’es toujours chaud pour passer chez nous ce soir avec Gérard et Robert ?"' class="block w-full rounded-md border-slate-300 bg-white px-3 py-2 shadow-sm outline-none ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500"></textarea>
-        <p class="mt-2 text-xs text-slate-500">Traitement local, aucune donnée n&#39;est envoyée sur le réseau.</p>
-      </section>
-
-      <section>
-        <div class="mb-2 flex items-center justify-between">
-          <span class="text-sm font-medium text-slate-700">Sortie</span>
-          <span id="output-mode" class="text-xs text-slate-500">—</span>
-        </div>
-        <div class="rounded-md bg-white p-3 ring-1 ring-inset ring-slate-300">
-          <pre id="output" class="wrap text-sm"></pre>
-        </div>
-      </section>
-    </div>
-  </main>
-
-  <footer class="border-t bg-white">
-    <div class="mx-auto max-w-7xl px-4 py-4 md:px-6">
-      <p class="text-xs text-slate-500">Open source — 100% client-side — Déployable sur Netlify.</p>
-    </div>
-  </footer>
-
-  <script src="app.js"></script>
-</body>
+<html lang="fr" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Calculez une répartition équitable des dépenses du couple en tenant compte des revenus, tickets restaurant et préférences."
+    />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Équilibre couple — calculateur</title>
+  </head>
+  <body class="h-full bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-gray-100">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+  
 </html>
